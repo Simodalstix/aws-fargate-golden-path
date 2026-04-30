@@ -3,14 +3,14 @@ from aws_cdk import (
     aws_elasticloadbalancingv2 as elbv2,
     aws_ecs as ecs,
     aws_logs as logs,
+    aws_sns as sns,
+    aws_ssm as ssm,
     CfnOutput,
     Tags,
 )
 from constructs import Construct
 from custom_constructs.dashboards import Dashboards
 from custom_constructs.alarms import Alarms
-from custom_constructs.log_metrics import LogMetrics
-from typing import Optional
 
 
 class ObservabilityStack(Stack):
@@ -23,32 +23,24 @@ class ObservabilityStack(Stack):
         database,
         waf_web_acl,
         env_name: str,
-        alarm_email: Optional[str] = None,
-        webhook_url: Optional[str] = None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
         self.env_name = env_name
-        self.alb = alb
-        self.ecs_service = ecs_service
-        self.database = database
-        self.waf_web_acl = waf_web_acl
 
-        # Get the application log group from the ECS service
-        # We'll need to reference it from the compute stack
+        # Import the shared SNS topic from aws-ops-observability
+        sns_topic_arn = ssm.StringParameter.value_for_string_parameter(
+            self, "/ops-lab/shared/sns-topic-arn"
+        )
+        alarm_topic = sns.Topic.from_topic_arn(self, "SharedAlarmTopic", sns_topic_arn)
+
         self.log_group = logs.LogGroup.from_log_group_name(
             self,
             "ApplicationLogGroup",
-            log_group_name=f"/ecs/golden-path-app-{env_name}",
+            log_group_name="/ops-lab/fargate/app",
         )
 
-        # Create log metrics - temporarily disabled due to CDK v2 compatibility issues
-        # self.log_metrics = LogMetrics(
-        #     self, "LogMetrics", env_name=env_name, log_group=self.log_group
-        # )
-
-        # Create dashboards
         self.dashboards = Dashboards(
             self,
             "Dashboards",
@@ -59,7 +51,6 @@ class ObservabilityStack(Stack):
             waf_web_acl=waf_web_acl,
         )
 
-        # Create alarms
         self.alarms = Alarms(
             self,
             "Alarms",
@@ -68,70 +59,50 @@ class ObservabilityStack(Stack):
             ecs_service=ecs_service,
             database=database,
             waf_web_acl=waf_web_acl,
-            alarm_email=alarm_email,
-            webhook_url=webhook_url,
+            alarm_topic=alarm_topic,
         )
 
         # Expose critical alarms for FIS stop conditions
         self.critical_alarms = [
-            alarm for alarm in self.alarms.alarms 
-            if "5xx" in alarm.alarm_name or "UnhealthyTargets" in alarm.alarm_name or "TaskCount" in alarm.alarm_name
+            alarm for alarm in self.alarms.alarms
+            if "5xx" in alarm.alarm_name
+            or "unhealthy-targets" in alarm.alarm_name
+            or "task-count" in alarm.alarm_name
         ]
 
-        # Add tags
-        Tags.of(self.dashboards.dashboard).add("Environment", env_name)
-        Tags.of(self.dashboards.dashboard).add("Project", "ECS-Fargate-Golden-Path")
+        Tags.of(self).add("Project", "ops-lab")
+        Tags.of(self).add("Stack", "fargate")
+        Tags.of(self).add("Environment", env_name)
 
-        # Outputs
         CfnOutput(
-            self,
-            "DashboardURL",
+            self, "DashboardURL",
             value=f"https://{self.region}.console.aws.amazon.com/cloudwatch/home?region={self.region}#dashboards:name={self.dashboards.dashboard.dashboard_name}",
             description="CloudWatch Dashboard URL",
-            export_name=f"GoldenPath-{env_name}-DashboardURL",
+            export_name=f"FargateObservability-{env_name}-DashboardURL",
         )
-
         CfnOutput(
-            self,
-            "AlarmTopicArn",
-            value=self.alarms.alarm_topic.topic_arn,
-            description="SNS Topic ARN for alarms",
-            export_name=f"GoldenPath-{env_name}-AlarmTopicArn",
-        )
-
-        CfnOutput(
-            self,
-            "LogGroupName",
+            self, "LogGroupName",
             value=self.log_group.log_group_name,
             description="Application log group name",
-            export_name=f"GoldenPath-{env_name}-LogGroupName",
+            export_name=f"FargateObservability-{env_name}-LogGroupName",
         )
-
-        # Output useful CloudWatch Insights queries
         CfnOutput(
-            self,
-            "ErrorLogsQuery",
+            self, "ErrorLogsQuery",
             value="fields @timestamp, requestId, path, status, errorType, latencyMs | filter ispresent(errorType) | sort @timestamp desc | limit 100",
             description="CloudWatch Insights query for error logs",
         )
-
         CfnOutput(
-            self,
-            "SlowRequestsQuery",
+            self, "SlowRequestsQuery",
             value="fields @timestamp, requestId, path, status, latencyMs | filter latencyMs > 1000 | sort latencyMs desc | limit 100",
             description="CloudWatch Insights query for slow requests",
         )
-
         CfnOutput(
-            self,
-            "Status5xxQuery",
+            self, "Status5xxQuery",
             value="fields @timestamp, requestId, path, status, errorType, latencyMs | filter status >= 500 | sort @timestamp desc | limit 100",
             description="CloudWatch Insights query for 5xx status codes",
         )
-
         CfnOutput(
-            self,
-            "RequestsByPathQuery",
+            self, "RequestsByPathQuery",
             value="stats count() by path | sort count desc",
             description="CloudWatch Insights query for requests by path",
         )

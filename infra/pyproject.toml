@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "aws-fargate-golden-path"
+version = "0.1.0"
+description = "ECS Fargate golden path platform"
+authors = ["Simon Parker <lastpolar@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+aws-cdk-lib = "^2.180.0"
+constructs = ">=10.0.0,<11.0.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+pytest-cov = "^4.1.0"
+flake8 = "^6.1.0"
+moto = {extras = ["all"], version = "^4.2.14"}
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

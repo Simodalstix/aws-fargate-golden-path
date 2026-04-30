@@ -34,7 +34,7 @@ class Dashboards(Construct):
         self.dashboard = cloudwatch.Dashboard(
             self,
             "MainDashboard",
-            dashboard_name=f"GoldenPath-{env_name}",
+            dashboard_name=f"ops-lab-fargate-{env_name}",
             period_override=cloudwatch.PeriodOverride.AUTO,
             start="-PT6H",  # Last 6 hours
         )
