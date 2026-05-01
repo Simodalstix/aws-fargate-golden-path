@@ -1,12 +1,13 @@
 import os
 import json
+import time
 import uuid
 from datetime import datetime
 
 import boto3
 import psycopg2
 import structlog
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, HttpUrl
 
@@ -24,10 +25,43 @@ logger = structlog.get_logger()
 
 app = FastAPI(title="URL Shortener")
 
-DB_SECRET_ARN = os.getenv("DB_SECRET_ARN", "")
-DB_HOST       = os.getenv("DB_HOST", "")
-DB_NAME       = os.getenv("DB_NAME", "opslab")
-AWS_REGION    = os.getenv("AWS_REGION", "ap-southeast-2")
+DB_SECRET_ARN      = os.getenv("DB_SECRET_ARN", "")
+DB_HOST            = os.getenv("DB_HOST", "")
+DB_NAME            = os.getenv("DB_NAME", "opslab")
+AWS_REGION         = os.getenv("AWS_REGION", "ap-southeast-2")
+PARAM_FAILURE_MODE = os.getenv("PARAM_FAILURE_MODE", "")
+
+# SSM failure-mode cache — re-reads at most once per interval so the
+# break-fix gameday scenario reacts quickly without hammering SSM.
+_failure_cache: dict = {"value": "none", "ts": 0.0}
+_FAILURE_TTL = 5  # seconds
+
+
+def _failure_mode() -> str:
+    if not PARAM_FAILURE_MODE:
+        return "none"
+    now = time.monotonic()
+    if now - _failure_cache["ts"] > _FAILURE_TTL:
+        try:
+            val = boto3.client("ssm", region_name=AWS_REGION).get_parameter(
+                Name=PARAM_FAILURE_MODE
+            )["Parameter"]["Value"]
+            _failure_cache["value"] = val
+            _failure_cache["ts"] = now
+        except Exception:
+            pass
+    return _failure_cache["value"]
+
+
+@app.middleware("http")
+async def break_fix_middleware(request: Request, call_next):
+    if _failure_mode() == "return_500":
+        return Response(
+            content='{"detail":"injected failure"}',
+            status_code=500,
+            media_type="application/json",
+        )
+    return await call_next(request)
 
 
 def _db_creds():

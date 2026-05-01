@@ -1,6 +1,7 @@
 from aws_cdk import (
     Stack,
     Duration,
+    Tags,
     aws_fis as fis,
     aws_iam as iam,
     aws_ecs as ecs,
@@ -34,28 +35,27 @@ class FISStack(Stack):
         self.database = database
         self.stop_condition_alarms = stop_condition_alarms
 
-        # Create FIS service role
         self.fis_role = self._create_fis_role()
 
-        # Create experiment templates
         self.experiments = {}
         self._create_ecs_experiments()
-        self._create_network_experiments()
         self._create_database_experiments()
 
+        Tags.of(self).add("Project", "ops-lab")
+        Tags.of(self).add("Stack", "fargate")
+        Tags.of(self).add("Environment", env_name)
+
     def _create_fis_role(self) -> iam.Role:
-        """Create IAM role for FIS experiments"""
         role = iam.Role(
             self,
             "FISRole",
-            role_name=f"golden-path-fis-role-{self.env_name}",
+            role_name=f"ops-lab-fargate-fis-role-{self.env_name}",
             assumed_by=iam.ServicePrincipal("fis.amazonaws.com"),
             managed_policies=[
                 iam.ManagedPolicy.from_aws_managed_policy_name("CloudWatchReadOnlyAccess")
             ],
         )
 
-        # ECS permissions
         role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -70,7 +70,6 @@ class FISStack(Stack):
             )
         )
 
-        # RDS permissions
         role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -83,14 +82,14 @@ class FISStack(Stack):
             )
         )
 
-        # EC2 permissions for network experiments
+        # aws:ecs:task-cpu-stress requires SSM to run its action agent inside the task
         role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
                 actions=[
-                    "ec2:DescribeInstances",
-                    "ec2:DescribeNetworkInterfaces",
-                    "ec2:DescribeSubnets",
+                    "ssm:SendCommand",
+                    "ssm:ListCommands",
+                    "ssm:GetCommandInvocation",
                 ],
                 resources=["*"],
             )
@@ -99,13 +98,10 @@ class FISStack(Stack):
         return role
 
     def _create_ecs_experiments(self):
-        """Create ECS-related chaos experiments"""
-        
-        # ECS Task Termination Experiment
         self.experiments["ecs_task_termination"] = fis.CfnExperimentTemplate(
             self,
             "ECSTaskTermination",
-            description="Terminate random ECS tasks to test auto-recovery",
+            description="Stop 50% of Fargate tasks to verify ECS auto-recovery and ALB failover",
             role_arn=self.fis_role.role_arn,
             actions={
                 "StopTasks": {
@@ -122,36 +118,30 @@ class FISStack(Stack):
                     "resourceType": "aws:ecs:task",
                     "resourceArns": ["*"],
                     "selectionMode": "PERCENT(50)",
-                    "resourceTags": {
-                        "Environment": self.env_name,
-                    },
+                    "resourceTags": {"Environment": self.env_name},
                 }
             },
             stop_conditions=[
-                {
-                    "source": "aws:cloudwatch:alarm",
-                    "value": alarm.alarm_arn,
-                }
+                {"source": "aws:cloudwatch:alarm", "value": alarm.alarm_arn}
                 for alarm in self.stop_condition_alarms
             ],
             tags={
-                "Name": f"golden-path-ecs-task-termination-{self.env_name}",
+                "Name": f"ops-lab-fargate-ecs-task-termination-{self.env_name}",
                 "Environment": self.env_name,
                 "ExperimentType": "ECS",
             },
         )
 
-        # ECS CPU Stress Experiment
         self.experiments["ecs_cpu_stress"] = fis.CfnExperimentTemplate(
             self,
             "ECSCPUStress",
-            description="Inject CPU stress into ECS tasks",
+            description="Inject 80% CPU stress into one Fargate task to trigger autoscaling",
             role_arn=self.fis_role.role_arn,
             actions={
                 "CPUStress": {
                     "actionId": "aws:ecs:task-cpu-stress",
                     "parameters": {
-                        "duration": "PT10M",  # 10 minutes
+                        "duration": "PT10M",
                         "percent": "80",
                     },
                     "targets": {"Tasks": "ECSTasksTarget"},
@@ -162,102 +152,53 @@ class FISStack(Stack):
                     "resourceType": "aws:ecs:task",
                     "resourceArns": ["*"],
                     "selectionMode": "COUNT(1)",
-                    "resourceTags": {
-                        "Environment": self.env_name,
-                    },
+                    "resourceTags": {"Environment": self.env_name},
                 }
             },
             stop_conditions=[
-                {
-                    "source": "aws:cloudwatch:alarm",
-                    "value": alarm.alarm_arn,
-                }
+                {"source": "aws:cloudwatch:alarm", "value": alarm.alarm_arn}
                 for alarm in self.stop_condition_alarms
             ],
             tags={
-                "Name": f"golden-path-ecs-cpu-stress-{self.env_name}",
+                "Name": f"ops-lab-fargate-ecs-cpu-stress-{self.env_name}",
                 "Environment": self.env_name,
                 "ExperimentType": "ECS",
             },
         )
 
-    def _create_network_experiments(self):
-        """Create network-related chaos experiments"""
-        
-        # Network Latency Experiment
-        self.experiments["network_latency"] = fis.CfnExperimentTemplate(
+    def _create_database_experiments(self):
+        if not hasattr(self.database, "cluster_identifier"):
+            return
+
+        self.experiments["aurora_failover"] = fis.CfnExperimentTemplate(
             self,
-            "NetworkLatency",
-            description="Inject network latency to test resilience",
+            "AuroraFailover",
+            description="Force Aurora failover to test URL shortener resilience during DB writer transition",
             role_arn=self.fis_role.role_arn,
             actions={
-                "NetworkLatency": {
-                    "actionId": "aws:network:latency",
-                    "parameters": {
-                        "duration": "PT5M",  # 5 minutes
-                        "delayMilliseconds": "200",
-                        "jitterMilliseconds": "50",
-                    },
-                    "targets": {"Subnets": "PrivateSubnetsTarget"},
+                "FailoverCluster": {
+                    "actionId": "aws:rds:failover-db-cluster",
+                    "parameters": {"forceFailover": "true"},
+                    "targets": {"Clusters": "AuroraClusterTarget"},
                 }
             },
             targets={
-                "PrivateSubnetsTarget": {
-                    "resourceType": "aws:ec2:subnet",
-                    "resourceArns": [f"arn:aws:ec2:{Stack.of(self).region}:{Stack.of(self).account}:subnet/{subnet.subnet_id}" for subnet in self.vpc.private_subnets],
-                    "selectionMode": "COUNT(1)",
+                "AuroraClusterTarget": {
+                    "resourceType": "aws:rds:cluster",
+                    "resourceArns": [
+                        f"arn:aws:rds:{Stack.of(self).region}:{Stack.of(self).account}"
+                        f":cluster:{self.database.cluster_identifier}"
+                    ],
+                    "selectionMode": "ALL",
                 }
             },
             stop_conditions=[
-                {
-                    "source": "aws:cloudwatch:alarm",
-                    "value": alarm.alarm_arn,
-                }
+                {"source": "aws:cloudwatch:alarm", "value": alarm.alarm_arn}
                 for alarm in self.stop_condition_alarms
             ],
             tags={
-                "Name": f"golden-path-network-latency-{self.env_name}",
+                "Name": f"ops-lab-fargate-aurora-failover-{self.env_name}",
                 "Environment": self.env_name,
-                "ExperimentType": "Network",
+                "ExperimentType": "Database",
             },
         )
-
-    def _create_database_experiments(self):
-        """Create database-related chaos experiments"""
-        
-        # Aurora Failover Experiment
-        if hasattr(self.database, 'cluster_identifier'):
-            self.experiments["aurora_failover"] = fis.CfnExperimentTemplate(
-                self,
-                "AuroraFailover",
-                description="Force Aurora cluster failover to test application resilience",
-                role_arn=self.fis_role.role_arn,
-                actions={
-                    "FailoverCluster": {
-                        "actionId": "aws:rds:failover-db-cluster",
-                        "parameters": {
-                            "forceFailover": "true",
-                        },
-                        "targets": {"Clusters": "AuroraClusterTarget"},
-                    }
-                },
-                targets={
-                    "AuroraClusterTarget": {
-                        "resourceType": "aws:rds:cluster",
-                        "resourceArns": [f"arn:aws:rds:{Stack.of(self).region}:{Stack.of(self).account}:cluster:{self.database.cluster_identifier}"],
-                        "selectionMode": "ALL",
-                    }
-                },
-                stop_conditions=[
-                    {
-                        "source": "aws:cloudwatch:alarm",
-                        "value": alarm.alarm_arn,
-                    }
-                    for alarm in self.stop_condition_alarms
-                ],
-                tags={
-                    "Name": f"golden-path-aurora-failover-{self.env_name}",
-                    "Environment": self.env_name,
-                    "ExperimentType": "Database",
-                },
-            )
