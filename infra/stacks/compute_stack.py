@@ -54,7 +54,7 @@ class ComputeStack(Stack):
         )
 
         self.logging_bucket = LoggingBucket(
-            self, "ALBLoggingBucket", env_name=env_name, kms_key=self.kms_key.key
+            self, "ALBLoggingBucket", env_name=env_name
         )
 
         self.waf_web_acl = WafWebAcl(self, "WAFWebACL", env_name=env_name)
@@ -76,7 +76,7 @@ class ComputeStack(Stack):
             cluster_name=f"ops-lab-fargate-cluster-{env_name}",
             vpc=self.vpc,
             enable_fargate_capacity_providers=True,
-            container_insights=True,
+            container_insights_v2=ecs.ContainerInsights.ENABLED,
         )
 
         self.log_group = logs.LogGroup(
