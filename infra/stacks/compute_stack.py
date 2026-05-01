@@ -316,13 +316,15 @@ class ComputeStack(Stack):
 
         self.app_container = self.task_definition.add_container(
             "AppContainer",
-            image=ecs.ContainerImage.from_asset("../app"),
+            image=ecs.ContainerImage.from_asset(".."),
             container_name="app",
             logging=ecs.LogDrivers.aws_logs(
                 stream_prefix="app", log_group=self.log_group
             ),
             environment={
                 "DB_SECRET_ARN": self.db_secret.secret_arn,
+                "DB_HOST": self.database.cluster_endpoint.hostname,
+                "DB_NAME": "opslab",
                 "PARAM_FAILURE_MODE": (
                     "/ops-lab/fargate/failure-mode" if enable_break_fix else ""
                 ),
