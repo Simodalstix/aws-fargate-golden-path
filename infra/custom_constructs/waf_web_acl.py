@@ -14,8 +14,8 @@ class WafWebAcl(Construct):
             "WebACL",
             scope="REGIONAL",
             default_action=wafv2.CfnWebACL.DefaultActionProperty(allow={}),
-            name=f"golden-path-waf-{env_name}",
-            description=f"WAF Web ACL for Golden Path {env_name}",
+            name=f"ops-lab-fargate-waf-{env_name}",
+            description=f"WAF Web ACL for ops-lab Fargate {env_name}",
             rules=[
                 # AWS Managed Rules - Common Rule Set
                 wafv2.CfnWebACL.RuleProperty(
@@ -96,7 +96,7 @@ class WafWebAcl(Construct):
             visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
                 sampled_requests_enabled=True,
                 cloud_watch_metrics_enabled=True,
-                metric_name=f"GoldenPathWAF{env_name}",
+                metric_name=f"OpsLabFargateWAF{env_name}",
             ),
         )
 

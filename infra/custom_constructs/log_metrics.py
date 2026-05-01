@@ -32,7 +32,7 @@ class LogMetrics(Construct):
             filter_pattern=logs.FilterPattern.exists("$.errorType"),
             metric_transformations=[
                 logs.MetricTransformation(
-                    metric_namespace="GoldenPath/Application",
+                    metric_namespace="OpsLabFargate/Application",
                     metric_name="ErrorCount",
                     metric_value="1",
                     default_value=0,
@@ -53,7 +53,7 @@ class LogMetrics(Construct):
             ),
             metric_transformations=[
                 logs.MetricTransformation(
-                    metric_namespace="GoldenPath/Application",
+                    metric_namespace="OpsLabFargate/Application",
                     metric_name="Status5xxCount",
                     metric_value="1",
                     default_value=0,
@@ -71,7 +71,7 @@ class LogMetrics(Construct):
             filter_pattern=logs.FilterPattern.exists("$.latencyMs"),
             metric_transformations=[
                 logs.MetricTransformation(
-                    metric_namespace="GoldenPath/Application",
+                    metric_namespace="OpsLabFargate/Application",
                     metric_name="RequestLatency",
                     metric_value="$.latencyMs",
                     default_value=0,
@@ -89,7 +89,7 @@ class LogMetrics(Construct):
             filter_pattern=logs.FilterPattern.exists("$.requestId"),
             metric_transformations=[
                 logs.MetricTransformation(
-                    metric_namespace="GoldenPath/Application",
+                    metric_namespace="OpsLabFargate/Application",
                     metric_name="RequestCount",
                     metric_value="1",
                     default_value=0,
@@ -101,7 +101,7 @@ class LogMetrics(Construct):
     def get_error_count_metric(self) -> cloudwatch.Metric:
         """Get CloudWatch metric for error count"""
         return cloudwatch.Metric(
-            namespace="GoldenPath/Application",
+            namespace="OpsLabFargate/Application",
             metric_name="ErrorCount",
             dimensions_map={"Environment": self.env_name},
             statistic="Sum",
@@ -110,7 +110,7 @@ class LogMetrics(Construct):
     def get_5xx_count_metric(self) -> cloudwatch.Metric:
         """Get CloudWatch metric for 5xx status count"""
         return cloudwatch.Metric(
-            namespace="GoldenPath/Application",
+            namespace="OpsLabFargate/Application",
             metric_name="Status5xxCount",
             dimensions_map={"Environment": self.env_name},
             statistic="Sum",
@@ -119,7 +119,7 @@ class LogMetrics(Construct):
     def get_latency_metric(self) -> cloudwatch.Metric:
         """Get CloudWatch metric for request latency"""
         return cloudwatch.Metric(
-            namespace="GoldenPath/Application",
+            namespace="OpsLabFargate/Application",
             metric_name="RequestLatency",
             dimensions_map={"Environment": self.env_name},
             statistic="Average",
@@ -128,7 +128,7 @@ class LogMetrics(Construct):
     def get_request_count_metric(self) -> cloudwatch.Metric:
         """Get CloudWatch metric for request count"""
         return cloudwatch.Metric(
-            namespace="GoldenPath/Application",
+            namespace="OpsLabFargate/Application",
             metric_name="RequestCount",
             dimensions_map={"Environment": self.env_name},
             statistic="Sum",

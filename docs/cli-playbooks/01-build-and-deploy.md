@@ -61,70 +61,34 @@ FIS is disabled by default. To enable:
 poetry run cdk deploy FargateFIS-lab -c enableFIS=true
 ```
 
-## 5. Build and push the container image
+## 5. Build, push, and deploy
 
-Get the ECR URI from SSM:
-
-```bash
-ECR_URI=$(aws ssm get-parameter \
-  --name /ops-lab/fargate/ecr-repo-uri \
-  --query Parameter.Value --output text)
-```
-
-Authenticate Docker to ECR:
+Run from the repo root. The script handles ECR auth, docker build/push, and
+triggers a CodeDeploy blue/green deployment:
 
 ```bash
-aws ecr get-login-password --region ap-southeast-2 \
-  | docker login --username AWS --password-stdin "$ECR_URI"
+cd ..   # repo root
+python scripts/build_and_push.py
 ```
 
-Build, tag, and push:
+To push without deploying (e.g. to stage an image first):
 
 ```bash
-docker build -t ops-lab-fargate-app ../app/
-docker tag ops-lab-fargate-app:latest "$ECR_URI:latest"
-docker push "$ECR_URI:latest"
+python scripts/build_and_push.py --no-deploy
 ```
 
-## 6. Trigger a new ECS deployment
-
-After pushing a new image, force a new deployment so ECS pulls it:
+To tag with a specific version instead of `latest`:
 
 ```bash
-CLUSTER=$(aws ssm get-parameter \
-  --name /ops-lab/fargate/cluster-name \
-  --query Parameter.Value --output text)
-
-SERVICE=$(aws ssm get-parameter \
-  --name /ops-lab/fargate/service-name \
-  --query Parameter.Value --output text)
-
-aws ecs update-service \
-  --cluster "$CLUSTER" \
-  --service "$SERVICE" \
-  --force-new-deployment
+python scripts/build_and_push.py --tag v1.2.3
 ```
 
-## 7. Verify deployment
+## 6. Verify deployment
 
 ```bash
-# Watch service stabilise
-aws ecs wait services-stable \
-  --cluster "$CLUSTER" \
-  --services "$SERVICE"
-
-# Check running task count
-aws ecs describe-services \
-  --cluster "$CLUSTER" \
-  --services "$SERVICE" \
-  --query 'services[0].{desired:desiredCount,running:runningCount,pending:pendingCount}'
-
-# Hit the ALB
-ALB_DNS=$(aws ssm get-parameter \
-  --name /ops-lab/fargate/alb-dns-name \
-  --query Parameter.Value --output text)
-
-curl -s "http://$ALB_DNS/healthz"
+python scripts/verify_fargate.py
 ```
 
-Expected: `{"status": "ok"}` with HTTP 200.
+Expected output ends with `ALL CHECKS PASSED`. The script confirms SSM
+outputs exist, ECS tasks are running at desired count, ALB returns 200 on
+`/healthz`, and a live `POST /shorten` round-trip succeeds.

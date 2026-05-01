@@ -19,7 +19,7 @@ class KmsKey(Construct):
             description=description,
             enable_key_rotation=True,
             removal_policy=RemovalPolicy.DESTROY,  # Set to RETAIN for production
-            alias=f"golden-path-{construct_id.lower()}-{env_name}",
+            alias=f"ops-lab-fargate-{construct_id.lower()}-{env_name}",
         )
 
         # Allow CloudWatch Logs to use the key
